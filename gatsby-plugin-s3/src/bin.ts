@@ -2,7 +2,8 @@
 
 import '@babel/polyfill';
 import 'fs-posix';
-import S3, { NextToken, ObjectList, RoutingRules } from 'aws-sdk/clients/s3';
+import S3, { ClientConfiguration, NextToken, ObjectList, RoutingRules } from 'aws-sdk/clients/s3';
+import STS from 'aws-sdk/clients/sts';
 import yargs from 'yargs';
 import { CACHE_FILES, GatsbyRedirect, Params, S3PluginOptions } from './constants';
 import { readJson } from 'fs-extra';
@@ -144,7 +145,22 @@ export const deploy = async ({ yes, bucket, userAgent }: DeployArguments = {}) =
             ...httpOptions,
         };
 
-        const s3 = new S3({
+        let roleCredentials;
+
+        if (process.env.AWS_ROLE_ARN && process.env.AWS_ROLE_SESSION_NAME) {
+            const sts = new STS({ apiVersion: '2011-06-15' });
+
+            const { Credentials } = await sts
+                .assumeRole({
+                    RoleArn: process.env.AWS_ROLE_ARN,
+                    RoleSessionName: process.env.AWS_ROLE_SESSION_NAME,
+                })
+                .promise();
+
+            roleCredentials = Credentials;
+        }
+
+        const s3Config: ClientConfiguration = {
             region: config.region,
             endpoint: config.customAwsEndpointHostname,
             customUserAgent: userAgent ?? '',
@@ -153,7 +169,20 @@ export const deploy = async ({ yes, bucket, userAgent }: DeployArguments = {}) =
             retryDelayOptions: {
                 customBackoff: process.env.fixedRetryDelay ? () => Number(config.fixedRetryDelay) : undefined,
             },
-        });
+        };
+
+        if (roleCredentials) {
+            console.log(
+                `Uploading to S3 using role ${process.env.AWS_ROLE_ARN} and session ${process.env.AWS_ROLE_SESSION_NAME}`
+            );
+            s3Config.credentials = {
+                accessKeyId: roleCredentials.AccessKeyId,
+                secretAccessKey: roleCredentials.SecretAccessKey,
+                sessionToken: roleCredentials.SessionToken,
+            };
+        }
+
+        const s3 = new S3(s3Config);
 
         const { exists, region } = await getBucketInfo(config, s3);
 
