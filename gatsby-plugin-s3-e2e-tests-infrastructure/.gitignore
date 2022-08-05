@@ -1,4 +1,0 @@
-.terraform*
-artifacts
-terraform.tfstate
-terraform.tfstate*
